@@ -23,6 +23,7 @@ The AlternaDevStudio.com website is currently in the early development phase. Th
 - ✅ Basic layout and initial pages (Home, About)
 - ✅ Testing infrastructure with Jest
 - ✅ Merged includes into layouts folder to simplify directory structure
+- ✅ Added Makefile to simplify development workflow and environment management
 
 ### In Progress
 
@@ -71,6 +72,17 @@ The specification calls for integration with Twitch and YouTube. A decision need
 - **Data Files**: Data fetching logic is isolated in dedicated files in `src/_data/`
 - **Utility Functions**: Common functionality is extracted to utility files
 
+### Development Workflow
+
+- **Makefile**: The project includes a streamlined Makefile with essential targets
+  - `make dev`: Start both Directus and the development server
+  - `make shutdown`: Stop both Directus and the development server
+  - `make reset`: Reset the entire development environment
+  - `make build`: Build the site for production
+  - `make clean`: Clean the build directory
+  - `make test`: Run all tests
+- **pnpm Scripts**: All npm scripts use pnpm as the package manager
+
 ### Error Handling
 
 - **Fallback Data**: Sample data is provided when Directus is unavailable
@@ -93,7 +105,7 @@ The 11ty configuration is working well, with Nunjucks as the templating engine. 
 
 ### Docker-Based Development
 
-The use of Docker Compose for Directus, PostgreSQL, and Minio has simplified the local development setup. This approach ensures consistency across development environments.
+The use of Docker Compose for Directus, PostgreSQL, and Minio has simplified the local development setup. This approach ensures consistency across development environments. The Makefile's `dev` and `shutdown` targets handle starting and stopping Docker containers, while the `reset` target handles cleaning and setting up the environment.
 
 ## Current Challenges
 
