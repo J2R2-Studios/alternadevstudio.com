@@ -2,99 +2,69 @@
 
 # Script to set up a Minio bucket for Directus
 # This script creates a bucket in Minio and configures it for use with Directus
-# Uses direct API calls instead of the Minio Client (mc)
+# Uses Docker commands to interact with the Minio container directly
 
 # Use environment variables if set, otherwise use default values
-# First check for specific Minio client variables, then fall back to Minio server variables, then defaults
 BUCKET_NAME=${MINIO_BUCKET_NAME:-"directus"}
-MINIO_ENDPOINT=${MINIO_ENDPOINT:-"http://localhost:9000"}
-MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-"minioadmin"}}
-MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-"minioadmin"}}
+MINIO_ROOT_USER=${MINIO_ROOT_USER:-"minioadmin"}
+MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-"minioadmin"}
 
 echo "Setting up Minio bucket for Directus..."
 echo "Using configuration:"
-echo "  Minio Endpoint: $MINIO_ENDPOINT"
-echo "  Minio Access Key: $MINIO_ACCESS_KEY"
-echo "  Minio Secret Key: ${MINIO_SECRET_KEY:0:3}*****"
+echo "  Minio Root User: $MINIO_ROOT_USER"
+echo "  Minio Root Password: ${MINIO_ROOT_PASSWORD:0:3}*****"
 echo "  Bucket Name: $BUCKET_NAME"
 echo ""
 
-# Function to check if a bucket exists
-check_bucket_exists() {
-    # Make a HEAD request to the bucket
-    status_code=$(curl -s -o /dev/null -w "%{http_code}" \
-        -H "Host: $BUCKET_NAME.s3.amazonaws.com" \
-        -X HEAD "$MINIO_ENDPOINT/$BUCKET_NAME" \
-        -u "$MINIO_ACCESS_KEY:$MINIO_SECRET_KEY")
-    
-    if [ "$status_code" -eq 200 ]; then
-        return 0  # Bucket exists
-    else
-        return 1  # Bucket doesn't exist
-    fi
-}
-
-# Check if the bucket already exists
-if check_bucket_exists; then
-    echo "Bucket '$BUCKET_NAME' already exists."
-else
-    # Create the bucket
-    echo "Creating bucket '$BUCKET_NAME'..."
-    
-    status_code=$(curl -s -o /dev/null -w "%{http_code}" \
-        -X PUT "$MINIO_ENDPOINT/$BUCKET_NAME" \
-        -u "$MINIO_ACCESS_KEY:$MINIO_SECRET_KEY")
-    
-    if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 204 ]; then
-        echo "Bucket created successfully."
-    else
-        echo "Failed to create bucket. Status code: $status_code"
-        echo "Please check your Minio configuration and try again."
-        exit 1
-    fi
-fi
-
-# Set public read access
-echo "Setting public read access for bucket '$BUCKET_NAME'..."
-
-# Create a policy file
-cat > /tmp/policy.json << EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {
-                "AWS": [
-                    "*"
-                ]
-            },
-            "Action": [
-                "s3:GetObject"
-            ],
-            "Resource": [
-                "arn:aws:s3:::${BUCKET_NAME}/*"
-            ]
-        }
-    ]
-}
-EOF
-
-# Apply the policy
-status_code=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X PUT "$MINIO_ENDPOINT/$BUCKET_NAME/?policy" \
-    -u "$MINIO_ACCESS_KEY:$MINIO_SECRET_KEY" \
-    -H "Content-Type: application/json" \
-    -d @/tmp/policy.json)
-
-if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 204 ]; then
-    echo "Public read access set successfully."
-else
-    echo "Failed to set bucket policy. Status code: $status_code"
-    echo "Please check your Minio configuration and try again."
-    rm /tmp/policy.json
+# Check if the Minio container is running
+if ! docker-compose ps | grep -q "minio.*Up"; then
+    echo "Minio container is not running. Please start it with 'docker-compose up -d' first."
     exit 1
 fi
 
-rm /tmp/policy.json
+# Get the Minio container ID
+MINIO_CONTAINER=$(docker-compose ps -q minio)
+if [ -z "$MINIO_CONTAINER" ]; then
+    echo "Could not find Minio container. Please check your docker-compose configuration."
+    exit 1
+fi
+
+echo "Using Minio container: $MINIO_CONTAINER"
+
+# Create a temporary script to run inside the container
+cat > /tmp/minio-setup.sh << EOF
+#!/bin/sh
+set -e
+
+# Install mc (MinIO Client) if not already installed
+if ! command -v mc > /dev/null; then
+    echo "Installing MinIO Client (mc)..."
+    wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/bin/mc
+    chmod +x /usr/bin/mc
+fi
+
+# Configure mc to use our MinIO server
+mc alias set myminio http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+
+# Create the bucket (will fail silently if it already exists)
+echo "Creating bucket '$BUCKET_NAME' (if it doesn't exist)..."
+mc mb myminio/$BUCKET_NAME --ignore-existing
+echo "Bucket creation step completed."
+
+# Set public read access
+echo "Setting public read access for bucket '$BUCKET_NAME'..."
+mc anonymous set download myminio/$BUCKET_NAME
+echo "Public read access set successfully."
+EOF
+
+# Copy the script to the container
+docker cp /tmp/minio-setup.sh $MINIO_CONTAINER:/tmp/minio-setup.sh
+
+# Make the script executable and run it
+docker exec $MINIO_CONTAINER chmod +x /tmp/minio-setup.sh
+docker exec $MINIO_CONTAINER /tmp/minio-setup.sh
+
+# Clean up
+rm /tmp/minio-setup.sh
 echo ""
+echo "Minio bucket setup completed successfully."
